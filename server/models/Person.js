@@ -35,6 +35,7 @@ const personSchema = new mongoose.Schema(
       default: ''
     },
     asylumNarrative: { type: String, default: '' },
+    translatedNarrative: { type: String, default: '' },
     unhcrRef:        { type: String, default: '' },
 
     // Fixed: enum constraint on currentStatus

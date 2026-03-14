@@ -235,12 +235,34 @@ export default function CaseFile() {
             </div>
           </SectionCard>
 
-          {/* Asylum Narrative */}
-          {person.asylumNarrative && (
-            <SectionCard title="Asylum Narrative" icon={FileText} className="md:col-span-2">
-              <p className="text-gray-800 leading-relaxed whitespace-pre-wrap">
-                {person.asylumNarrative}
-              </p>
+          {/* Narrative History */}
+          {(person.asylumNarrative || person.translatedNarrative) && (
+            <SectionCard title="Narrative History" icon={FileText} className="md:col-span-2">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 bg-gray-50/50 p-4 rounded-xl border border-gray-100">
+                {/* Original Text */}
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span> Original Audio Text
+                  </h4>
+                  <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm min-h-[120px]">
+                    <p className="text-gray-800 leading-relaxed whitespace-pre-wrap text-sm">
+                      {person.asylumNarrative || <span className="text-gray-400 italic">No original text recorded</span>}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Translated Text */}
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-400"></span> English Translation
+                  </h4>
+                  <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm min-h-[120px]">
+                    <p className="text-gray-800 leading-relaxed whitespace-pre-wrap text-sm">
+                      {person.translatedNarrative || <span className="text-gray-400 italic">No translation available</span>}
+                    </p>
+                  </div>
+                </div>
+              </div>
             </SectionCard>
           )}
 

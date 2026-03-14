@@ -160,6 +160,7 @@ function Intake() {
       originCountry: values.nationality,
       languages: values.preferredLanguage ? [values.preferredLanguage] : [],
       asylumNarrative: values.voiceNarrative || '',
+      translatedNarrative: values.translatedNarrative || '',
       flags: {
         medicalEmergency: urgentNeeds.includes('Medical'),
         unaccompaniedMinor: values.isTravelingAlone && !values.dateOfBirth ? true : false,
