@@ -235,6 +235,15 @@ export default function CaseFile() {
             </div>
           </SectionCard>
 
+          {/* Asylum Narrative */}
+          {person.asylumNarrative && (
+            <SectionCard title="Asylum Narrative" icon={FileText} className="md:col-span-2">
+              <p className="text-gray-800 leading-relaxed whitespace-pre-wrap">
+                {person.asylumNarrative}
+              </p>
+            </SectionCard>
+          )}
+
           {/* Urgent Needs */}
           <SectionCard title="Urgent Needs & Service Tracking" icon={Heart} className="md:col-span-2">
             <div className="flex flex-wrap gap-3">
@@ -253,17 +262,23 @@ export default function CaseFile() {
             <SectionCard title="Case Notes" icon={FileText} className="md:col-span-2">
               <div className="space-y-3">
                 {caseFile.notes.map((note, i) => (
-                  <div key={i} className="bg-gray-50 p-3 rounded-lg border border-gray-100">
-                    <div className="flex items-center gap-2 mb-1">
+                  <div key={i} className="bg-gray-50 p-4 rounded-lg border border-gray-100">
+                    <div className="flex items-center gap-2 mb-2">
                       <span className="text-sm font-semibold text-gray-800">
-                        {note.author?.name || 'Unknown'}
+                        {note.author?.name || 'System'}
                       </span>
-                      <span className="text-xs text-gray-500">{note.role}</span>
+                      {note.role && (
+                        <span className="text-xs font-medium px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded">
+                          {note.role}
+                        </span>
+                      )}
                       <span className="text-xs text-gray-400 ml-auto">
                         {new Date(note.createdAt).toLocaleString()}
                       </span>
                     </div>
-                    <p className="text-sm text-gray-700">{note.content}</p>
+                    <div className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+                      {note.content}
+                    </div>
                   </div>
                 ))}
               </div>

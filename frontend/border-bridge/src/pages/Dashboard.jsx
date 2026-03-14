@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { MapPin, AlertCircle, Clock, ChevronRight, Loader2 } from 'lucide-react';
 import { getPersons } from '../lib/api';
 
+const priorityWeights = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
+
 const vulnerabilityStyles = {
   "CRITICAL": "bg-red-50 text-red-700 border-red-200 ring-red-600/10",
   "HIGH": "bg-red-50 text-red-700 border-red-200 ring-red-600/10",
@@ -21,15 +23,9 @@ function statusToLabel(currentStatus) {
   return map[currentStatus] || currentStatus;
 }
 
-function priorityFromFlags(flags = {}) {
-  if (flags.medicalEmergency || flags.traffickingIndicator) return 'CRITICAL';
-  if (flags.unaccompaniedMinor || flags.familySeparated) return 'HIGH';
-  return 'MEDIUM';
-}
-
 function CaseCard({ caseData, onClick }) {
-  const { caseId, firstName, lastName, nationality, currentStatus, createdAt, flags } = caseData;
-  const priority = priorityFromFlags(flags);
+  const { caseId, firstName, lastName, nationality, currentStatus, createdAt, triagePriority } = caseData;
+  const priority = triagePriority || 'MEDIUM';
   const vStyle = vulnerabilityStyles[priority] || vulnerabilityStyles["MEDIUM"];
   const fullName = `${firstName} ${lastName}`;
   const status = statusToLabel(currentStatus);
@@ -107,13 +103,11 @@ export default function Dashboard() {
     return () => { cancelled = true; };
   }, []);
 
-  // Sort by priority (flags) then by date (newest first)
+  // Sort by AI triage priority (CRITICAL → HIGH → MEDIUM → LOW) then newest first
   const sortedCases = [...persons].sort((a, b) => {
-    const pA = priorityFromFlags(a.flags);
-    const pB = priorityFromFlags(b.flags);
-    const weights = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
-    const wDiff = (weights[pB] || 0) - (weights[pA] || 0);
-    if (wDiff !== 0) return wDiff;
+    const wA = priorityWeights[a.triagePriority] || 2;
+    const wB = priorityWeights[b.triagePriority] || 2;
+    if (wB !== wA) return wB - wA;
     return new Date(b.createdAt) - new Date(a.createdAt);
   });
 

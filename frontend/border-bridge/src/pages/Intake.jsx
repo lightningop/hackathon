@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useForm, useFieldArray } from 'react-hook-form';
-import { createPerson } from '../lib/api';
+import { createPerson, addCaseNote } from '../lib/api';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { intakeFormSchema } from '../types/formSchema';
 import AudioRecorder from '../components/AudioRecorder';
@@ -146,6 +146,10 @@ function Intake() {
     const firstName = nameParts[0];
     const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '-';
 
+    const urgentNeeds = values.urgentNeeds || [];
+    const familyMembers = (values.familyMembers || []).map((m) => m.value).filter(Boolean);
+    const missingRelatives = (values.missingRelatives || []).map((r) => r.value).filter(Boolean);
+
     const payload = {
       caseType: 'ASYLUM_SEEKER',
       firstName,
@@ -157,17 +161,37 @@ function Intake() {
       languages: values.preferredLanguage ? [values.preferredLanguage] : [],
       asylumNarrative: values.voiceNarrative || '',
       flags: {
-        medicalEmergency: (values.urgentNeeds || []).includes('Medical'),
-        unaccompaniedMinor: false,
+        medicalEmergency: urgentNeeds.includes('Medical'),
+        unaccompaniedMinor: values.isTravelingAlone && !values.dateOfBirth ? true : false,
         traffickingIndicator: false,
         asylumClaim: true,
-        familySeparated: (values.missingRelatives || []).length > 0,
+        familySeparated: missingRelatives.length > 0,
       },
     };
 
     try {
       const data = await createPerson(payload);
-      navigate('/submitted', { state: { person: data.person, caseFile: data.caseFile } });
+
+      // Auto-create a structured case note with all intake details
+      const noteLines = [];
+      noteLines.push(`[INTAKE FORM SUBMISSION]`);
+      if (values.nativeScriptNames) noteLines.push(`Native script name: ${values.nativeScriptNames}`);
+      noteLines.push(`Traveling alone: ${values.isTravelingAlone ? 'Yes' : 'No'}`);
+      noteLines.push(`Vulnerability marker: ${values.vulnerabilityMarker}`);
+      if (urgentNeeds.length > 0) noteLines.push(`Urgent needs: ${urgentNeeds.join(', ')}`);
+      if (familyMembers.length > 0) noteLines.push(`Family members present: ${familyMembers.join(', ')}`);
+      if (missingRelatives.length > 0) noteLines.push(`Missing relatives: ${missingRelatives.join(', ')}`);
+      if (values.translatedNarrative) noteLines.push(`Translated narrative: ${values.translatedNarrative}`);
+
+      try {
+        await addCaseNote(data.person._id, noteLines.join('\n'));
+      } catch (noteErr) {
+        console.warn('Case note auto-create failed:', noteErr.message);
+      }
+
+      navigate('/submitted', {
+        state: { person: data.person, caseFile: data.caseFile },
+      });
     } catch (err) {
       setSubmitError(err.message || 'Failed to submit intake form. Please try again.');
     } finally {

@@ -66,9 +66,21 @@ const getPersons = async (req, res) => {
     .populate('registeredBy', 'name role')
     .limit(100);
 
+  // Batch-fetch triage priority for all persons
+  const personIds = persons.map(p => p._id);
+  const caseFiles = await CaseFile.find({ person: { $in: personIds } })
+    .select('person triageBrief.priorityLevel')
+    .lean();
+
+  const priorityMap = {};
+  caseFiles.forEach(cf => {
+    priorityMap[cf.person.toString()] = cf.triageBrief?.priorityLevel || 'MEDIUM';
+  });
+
   // Strip sensitive legal/asylum fields for MEDICAL role
   const sanitized = persons.map(p => {
     const obj = p.toObject();
+    obj.triagePriority = priorityMap[p._id.toString()] || 'MEDIUM';
     if (req.user.role === 'MEDICAL') {
       delete obj.asylumNarrative;
       delete obj.persecutionGrounds;
