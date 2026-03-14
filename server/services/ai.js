@@ -5,9 +5,9 @@ const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
 const generateTriageBrief = async (personData) => {
   const {
-    caseType, flags, firstName,
+    caseType, flags, firstName, lastName,
     originCountry, displacementCause,
-    persecutionGrounds, asylumNarrative,
+    persecutionGrounds, asylumNarrative, translatedNarrative,
     languages, dateOfBirth
   } = personData;
 
@@ -21,30 +21,34 @@ const generateTriageBrief = async (personData) => {
     IDP:           'internally displaced person — focus on return feasibility, domestic service access, transition risk.'
   };
 
-  const prompt = `You are a trauma-informed humanitarian triage specialist.
+  const activeFlags = [];
+  if (flags?.medicalEmergency) activeFlags.push('Medical Emergency');
+  if (flags?.unaccompaniedMinor) activeFlags.push('Unaccompanied Minor');
+  if (flags?.traffickingIndicator) activeFlags.push('Trafficking Indicator');
+  if (flags?.familySeparated) activeFlags.push('Family Separated');
+
+  const narrativeText = translatedNarrative || asylumNarrative || 'No narrative provided.';
+
+  const prompt = `You are an expert humanitarian triage officer at a border crossing.
+Using the following refugee case file data, generate a concise AI triage summary in clear, human-understandable English for a border officer. Highlight key risks, humanitarian concerns, and recommended next steps.
 
 PERSON PROFILE:
-- Name: ${firstName}
+- Name: ${firstName} ${lastName || ''}
 - Case Type: ${caseType} — ${categoryContext[caseType]}
 - Age: ${age}
 - Origin: ${originCountry || 'Unknown'}
 - Languages: ${languages?.join(', ') || 'Unknown'}
-${caseType === 'IDP' ? `- Displacement cause: ${displacementCause}` : ''}
-${caseType !== 'IDP' ? `- Persecution grounds: ${persecutionGrounds || 'Not stated'}` : ''}
-${asylumNarrative ? `- Claim narrative: ${asylumNarrative}` : ''}
+${activeFlags.length > 0 ? `- Protection Flags: ${activeFlags.join(', ')}` : '- Protection Flags: None'}
 
-PROTECTION FLAGS:
-- Medical Emergency: ${flags?.medicalEmergency ? 'YES' : 'No'}
-- Unaccompanied Minor: ${flags?.unaccompaniedMinor ? 'YES' : 'No'}
-- Trafficking Indicator: ${flags?.traffickingIndicator ? 'YES' : 'No'}
-- Family Separated: ${flags?.familySeparated ? 'YES' : 'No'}
+CASE HISTORY (English Translation):
+${narrativeText}
 
-Respond ONLY with a JSON object, no markdown, no extra text:
+Provide your assessment matching this exact JSON format. Respond ONLY with the JSON object, no markdown formatting (like \`\`\`json):
 {
   "priorityLevel": "LOW|MEDIUM|HIGH|CRITICAL",
-  "summary": "2-sentence human summary of situation and most urgent need",
-  "topNeeds": ["need 1", "need 2", "need 3"],
-  "recommendedSteps": ["step 1", "step 2", "step 3"]
+  "summary": "Concise 2-3 sentence summary of the situation, risks, and most urgent humanitarian needs based directly on the narrative.",
+  "topNeeds": ["specific urgent need 1", "specific urgent need 2", "specific urgent need 3"],
+  "recommendedSteps": ["actionable step 1", "actionable step 2", "actionable step 3"]
 }`;
 
   try {
@@ -53,12 +57,59 @@ Respond ONLY with a JSON object, no markdown, no extra text:
     const clean = text.replace(/```json|```/g, '').trim();
     return JSON.parse(clean);
   } catch (err) {
-    console.error('Gemini triage error:', err.message);
+    console.warn(`[GEMINI UNAVAILABLE - USING OFFLINE LOGIC FALLBACK]: ${err.message}`);
+    
+    // Offline Rule-Based Fallback Generator 
+    // Generates a proper assessment locally if the external API fails.
+    
+    let priorityLevel = 'LOW';
+    let priorityScore = 0;
+    const topNeeds = [];
+    const recommendedSteps = [];
+    
+    let baseType = caseType?.toLowerCase().replace('_', ' ') || 'individual';
+    let summaryText = `Case involves a ${age === 'Unknown' ? '' : age + '-year-old '} ${baseType} from ${originCountry || 'an unknown region'}. `;
+
+    if (flags?.medicalEmergency) {
+      priorityScore += 3;
+      topNeeds.push('Immediate medical assessment');
+      recommendedSteps.push('Refer to on-site medical staff immediately');
+      summaryText += 'Presents with an urgent medical emergency requiring immediate attention. ';
+    }
+    if (flags?.unaccompaniedMinor) {
+      priorityScore += 3;
+      topNeeds.push('Child protection services');
+      recommendedSteps.push('Assign specialized case worker for unaccompanied minors');
+      summaryText += 'This case involves an unaccompanied minor, making them highly vulnerable to exploitation. ';
+    }
+    if (flags?.traffickingIndicator) {
+      priorityScore += 2;
+      topNeeds.push('Anti-trafficking screening');
+      recommendedSteps.push('Conduct specialized trafficking indicator interview');
+      summaryText += 'Potential signs of human trafficking are indicated. ';
+    }
+    if (flags?.familySeparated) {
+      priorityScore += 1;
+      topNeeds.push('Family tracing assistance');
+      recommendedSteps.push('Initiate family tracing protocols');
+      summaryText += 'The individual has been separated from family members. ';
+    }
+
+    if (priorityScore >= 3) priorityLevel = 'CRITICAL';
+    else if (priorityScore === 2) priorityLevel = 'HIGH';
+    else if (priorityScore === 1) priorityLevel = 'MEDIUM';
+
+    if (topNeeds.length === 0) {
+      topNeeds.push('Standard intake processing', 'Document verification', 'Service referral mapping');
+      recommendedSteps.push('Complete standard registration', 'Assign general case officer', 'Connect to basic services');
+      summaryText += 'Standard processing procedures apply. No immediate acute risks based on flags. Review narrative history for specifics.';
+    }
+
     return {
-      priorityLevel: 'MEDIUM',
-      summary: 'Triage assessment generated. Manual review recommended.',
-      topNeeds: ['Immediate assessment', 'Document verification', 'Service referral'],
-      recommendedSteps: ['Conduct full intake interview', 'Assign case officer', 'Connect to services']
+      priorityLevel,
+      summary: summaryText.trim(),
+      topNeeds: topNeeds.slice(0, 3), // Ensure max 3 elements
+      recommendedSteps: recommendedSteps.slice(0, 3) 
     };
   }
 };
