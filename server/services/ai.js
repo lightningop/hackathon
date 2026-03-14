@@ -1,7 +1,7 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
 const generateTriageBrief = async (personData) => {
   const {
@@ -83,9 +83,13 @@ Respond ONLY with JSON, no markdown, no extra text:
     const result = await model.generateContent(prompt);
     const text = result.response.text().trim();
     const clean = text.replace(/```json|```/g, '').trim();
+    
+    console.log("Gemini translate raw response:", clean);
     return JSON.parse(clean);
   } catch (err) {
-    console.error('Gemini translate error:', err.message);
+    console.error('=== GEMINI TRANSLATE ERROR ===');
+    console.error(err);
+    console.error('==============================');
     return {
       detectedLanguage: 'Unknown',
       translatedText: rawText,

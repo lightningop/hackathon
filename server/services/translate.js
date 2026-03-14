@@ -1,29 +1,27 @@
 const axios = require("axios");
 
-const API_KEY = process.env.TRANSLATOR_KEY;
-const REGION = process.env.TRANSLATOR_REGION;
-const ENDPOINT = "https://api.cognitive.microsofttranslator.com";
+async function translateText(text, source = 'Autodetect', target = 'en') {
+  let langPair;
+  if (source === 'Autodetect') {
+      langPair = `Autodetect|${target}`;
+  } else {
+      langPair = `${source}|${target}`;
+  }
 
-async function translateText(text, target) {
-  const response = await axios({
-    baseURL: ENDPOINT,
-    url: "/translate",
-    method: "post",
-    params: {
-      "api-version": "3.0",
-      to: target
-    },
-    headers: {
-      "Ocp-Apim-Subscription-Key": API_KEY,
-      "Ocp-Apim-Subscription-Region": REGION,
-      "Content-type": "application/json"
-    },
-    data: [
-      { Text: text }
-    ]
-  });
-
-  return response.data[0].translations[0].text;
+  const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${langPair}`;
+  
+  try {
+    const response = await axios.get(url);
+    
+    if (response.data && response.data.responseStatus === 200) {
+      return response.data.responseData.translatedText;
+    } else {
+      throw new Error(response.data?.responseDetails || 'Translation failed');
+    }
+  } catch (error) {
+    console.error("MyMemory API Error:", error.message);
+    throw error;
+  }
 }
 
 module.exports = { translateText };

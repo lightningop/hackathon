@@ -83,6 +83,24 @@ export function updatePersonFlags(personId, flags) {
   });
 }
 
+// ----------------------------------------------------------------------------
+// Triage/Translation endpoints
+// ----------------------------------------------------------------------------
+
+export async function translateText(text, sourceLang = 'Autodetect', targetLang = 'en') {
+  return await apiRequest('/translate', {
+    method: 'POST',
+    body: JSON.stringify({ text, source: sourceLang, target: targetLang }),
+  });
+}
+
+export async function translatePersonData(personId, targetLang) {
+  return await apiRequest(`/translate/person/${personId}`, {
+    method: 'POST',
+    body: JSON.stringify({ targetLang }),
+  });
+}
+
 // ── Cases ──
 export function getStats() {
   return apiRequest('/cases/stats/overview');
@@ -114,11 +132,4 @@ export function uploadDocument(personId, payload) {
 // ── Triage ──
 export function runTriage(personId) {
   return apiRequest(`/triage/${personId}`, { method: 'POST' });
-}
-
-export function translateText(rawText) {
-  return apiRequest('/triage/translate', {
-    method: 'POST',
-    body: JSON.stringify({ rawText }),
-  });
 }
