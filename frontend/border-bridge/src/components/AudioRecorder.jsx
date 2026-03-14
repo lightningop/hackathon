@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { Mic, MicOff, Loader2, Languages, RefreshCw, AlertCircle } from 'lucide-react';
 import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
+import { translateText as apiTranslateText } from '../lib/api';
 
 // Map of dropdown language options to BCP 47 language tags for Speech Recognition
 const languageCodeMap = {
@@ -14,13 +15,13 @@ const languageCodeMap = {
   'Russian': 'ru-RU',
   'Hindi': 'hi-IN',
   'Pashto': 'ps-AF',
-  'Dari': 'prs-AF', // Simplified
+  'Dari': 'prs-AF',
   'Farsi': 'fa-IR',
-  'Other': 'en-US' // Fallback
+  'Other': 'en-US'
 };
 
-// Map to LibreTranslate 2-letter ISO codes
-const libreTranslateCodeMap = {
+// Map to ISO codes for MyMemory translation API
+const translationCodeMap = {
   'English': 'en',
   'Spanish': 'es',
   'Arabic': 'ar',
@@ -29,10 +30,10 @@ const libreTranslateCodeMap = {
   'Ukrainian': 'uk',
   'Russian': 'ru',
   'Hindi': 'hi',
-  'Pashto': 'ps', // Not supported by default LibreTranslate models typically, but we will send it.
-  'Dari': 'fa', // Map to Persian as LibreTranslate fallback
+  'Pashto': 'ps',
+  'Dari': 'fa',
   'Farsi': 'fa',
-  'Other': 'en'
+  'Other': 'Autodetect'
 };
 
 export default function AudioRecorder({ 
@@ -52,26 +53,40 @@ export default function AudioRecorder({
   const recognitionRef = useRef(null);
   const finalTranscriptRef = useRef(initialValue);
   const translationTimeoutRef = useRef(null);
-
   const isRecordingRef = useRef(false);
+  const retryCountRef = useRef(0);
+  const maxRetries = 3;
 
-  // Initialize Speech Recognition
-  useEffect(() => {
-    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      setError("Speech recognition is not supported in this browser. Please use Chrome or Edge.");
-      return;
+  // Stable callback refs to avoid re-creating recognition on every render
+  const onTranscriptionUpdateRef = useRef(onTranscriptionUpdate);
+  onTranscriptionUpdateRef.current = onTranscriptionUpdate;
+
+  const onTranslationUpdateRef = useRef(onTranslationUpdate);
+  onTranslationUpdateRef.current = onTranslationUpdate;
+
+  const preferredLanguageRef = useRef(preferredLanguage);
+  preferredLanguageRef.current = preferredLanguage;
+
+  // Create a fresh SpeechRecognition instance on demand (not on mount)
+  const createRecognition = useCallback(() => {
+    // Clean up any existing instance
+    if (recognitionRef.current) {
+      try { recognitionRef.current.abort(); } catch (e) { /* ignore */ }
+      recognitionRef.current = null;
     }
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setError("Speech recognition is not supported in this browser. Please use Chrome or Edge.");
+      return null;
+    }
+
     const recognition = new SpeechRecognition();
-    
     recognition.continuous = true;
     recognition.interimResults = true;
-    
-    const langCode = languageCodeMap[preferredLanguage] || 'en-US';
-    recognition.lang = langCode;
 
-    // --- EXACT STATE SYNCHRONIZATION ---
+    const langCode = languageCodeMap[preferredLanguageRef.current] || 'en-US';
+    recognition.lang = langCode;
 
     // The browser has officially started listening
     recognition.onstart = () => {
@@ -79,7 +94,7 @@ export default function AudioRecorder({
       isRecordingRef.current = true;
       setIsWarmingUp(false);
       setError(null);
-      // Clear any pending auto-translations if the user starts speaking again quickly
+      retryCountRef.current = 0; // Reset retries on successful start
       if (translationTimeoutRef.current) clearTimeout(translationTimeoutRef.current);
     };
 
@@ -101,36 +116,84 @@ export default function AudioRecorder({
 
       const fullDisplay = finalTranscriptRef.current + (interimTranscript ? ' ' + interimTranscript : '');
       setOriginalText(fullDisplay);
-      onTranscriptionUpdate(fullDisplay);
+      onTranscriptionUpdateRef.current(fullDisplay);
     };
 
-    // The browser physically stopped hearing sound
     recognition.onspeechend = () => {
-       // We don't necessarily kill the recording session here yet (continuous=true),
-       // but it's a good place to listen for natural pauses if needed.
+      // No action needed — continuous mode handles this
     };
 
     recognition.onerror = (event) => {
-      console.error('Speech recognition error', event.error);
-      if (event.error === 'aborted') {
-        setIsRecording(false);
-        isRecordingRef.current = false;
-      } else if (event.error !== 'no-speech') {
-        setError(`Microphone error: ${event.error}. Please check permissions.`);
-        setIsRecording(false);
-        isRecordingRef.current = false;
+      // Ignore harmless errors silently
+      if (event.error === 'aborted' || event.error === 'no-speech') {
+        return;
       }
+
+      console.warn('Speech recognition error:', event.error);
+
+      if (event.error === 'network') {
+        // Chrome speech server disconnect — retry with backoff
+        if (isRecordingRef.current && retryCountRef.current < maxRetries) {
+          retryCountRef.current++;
+          const delay = retryCountRef.current * 1000; // 1s, 2s, 3s backoff
+          console.log(`Network error, retrying in ${delay}ms (attempt ${retryCountRef.current}/${maxRetries})`);
+          setTimeout(() => {
+            if (isRecordingRef.current) {
+              try {
+                const fresh = createRecognition();
+                if (fresh) {
+                  recognitionRef.current = fresh;
+                  fresh.start();
+                }
+              } catch (e) {
+                console.warn('Retry failed:', e);
+              }
+            }
+          }, delay);
+          return;
+        }
+        // Max retries exhausted
+        setError("Microphone connection lost. Please click 'Start Recording' again.");
+        setIsRecording(false);
+        setIsWarmingUp(false);
+        isRecordingRef.current = false;
+        return;
+      }
+
+      // Other errors (not-allowed, service-not-allowed, etc.)
+      setError(`Microphone error: ${event.error}. Please check permissions.`);
+      setIsRecording(false);
+      setIsWarmingUp(false);
+      isRecordingRef.current = false;
     };
 
     // The recognition service has fully disconnected
     recognition.onend = () => {
-      // If the user didn't explicitly trigger 'Stop Recording', 
-      // the browser just timed out due to silence. Force restart it!
+      // If user still wants to record, restart (silence timeout bounce-back)
       if (isRecordingRef.current) {
         try {
-          recognition.start();
-          return; // Skip the stop UI/translation logic since we successfully bounced back
-        } catch(e) {
+          // Small delay to avoid rapid-fire restarts
+          setTimeout(() => {
+            if (isRecordingRef.current && recognitionRef.current) {
+              try {
+                recognitionRef.current.start();
+              } catch (e) {
+                // If start fails, create a fresh instance
+                const fresh = createRecognition();
+                if (fresh) {
+                  recognitionRef.current = fresh;
+                  try { fresh.start(); } catch (e2) {
+                    console.warn('Could not restart recognition:', e2);
+                    setIsRecording(false);
+                    isRecordingRef.current = false;
+                    setError("Microphone disconnected. Please click 'Start Recording' again.");
+                  }
+                }
+              }
+            }
+          }, 300);
+          return;
+        } catch (e) {
           console.warn("Could not auto-restart continuous listening", e);
         }
       }
@@ -139,86 +202,79 @@ export default function AudioRecorder({
       setIsRecording(false);
       isRecordingRef.current = false;
 
-      // Give the final text a moment to settle, then trigger translation if needed
-      if (preferredLanguage !== 'English' && finalTranscriptRef.current.trim()) {
+      // Trigger translation after stopping
+      if (preferredLanguageRef.current !== 'English' && finalTranscriptRef.current.trim()) {
         if (translationTimeoutRef.current) clearTimeout(translationTimeoutRef.current);
         translationTimeoutRef.current = setTimeout(() => {
-            translateText(finalTranscriptRef.current);
+          translateText(finalTranscriptRef.current);
         }, 800);
       }
     };
 
     recognitionRef.current = recognition;
-
-    return () => {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch(e) {}
-      }
-      if (translationTimeoutRef.current) clearTimeout(translationTimeoutRef.current);
-    };
-  }, [preferredLanguage, onTranscriptionUpdate]);
+    return recognition;
+  }, []); // No deps — uses refs for everything
 
   const toggleRecording = () => {
     setError(null);
-    if (!recognitionRef.current) return;
 
-    if (isRecording) {
-      // User manually stopped -> force stop
-      isRecordingRef.current = false; // Mark true intent so onend doesn't bounce back
-      setIsRecording(false);          // Force immediate UI update to feel responsive
-      try {
-        recognitionRef.current.stop();
-      } catch (err) {
-        console.error(err);
+    if (isRecording || isRecordingRef.current) {
+      // ── STOP ──
+      isRecordingRef.current = false;
+      setIsRecording(false);
+      setIsWarmingUp(false);
+      retryCountRef.current = 0;
+
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort(); // Use abort() for immediate stop
+        } catch (err) {
+          console.warn('Stop error:', err);
+        }
       }
     } else {
-      // User manually started
+      // ── START ──
+      // Always create a fresh instance to avoid stale state
+      const recognition = createRecognition();
+      if (!recognition) return;
+
+      finalTranscriptRef.current = originalText;
+      setIsWarmingUp(true);
+      isRecordingRef.current = true;
+      retryCountRef.current = 0;
+
       try {
-        finalTranscriptRef.current = originalText;
-        setIsWarmingUp(true);
-        isRecordingRef.current = true;
-        recognitionRef.current.start();
+        recognition.start();
       } catch (err) {
-        console.error(err);
+        console.error('Start error:', err);
         setIsWarmingUp(false);
-        setError("Could not reconnect to microphone. Please refresh.");
+        isRecordingRef.current = false;
+        setError("Could not start microphone. Please refresh and try again.");
       }
     }
   };
 
   const translateText = async (textToTranslate) => {
-    if (!textToTranslate.trim() || preferredLanguage === 'English') return;
+    if (!textToTranslate.trim() || preferredLanguageRef.current === 'English') return;
 
     setIsTranslating(true);
     setError(null);
-
-    // MyMemory uses standard ISO codes (e.g., en, es, fr, ar)
-    const sourceLang = libreTranslateCodeMap[preferredLanguage] || 'en';
-    const langPair = `${sourceLang}|en`;
     
     try {
-      // Using MyMemory Translation API (Free, no key required for low volume)
-      const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(textToTranslate)}&langpair=${langPair}`;
-      const response = await fetch(url);
-
-      if (!response.ok) {
-        throw new Error('Translation service unavailable');
-      }
-
-      const data = await response.json();
+      // Pass the specific source language to the backend translation service for better accuracy
+      const sourceLang = translationCodeMap[preferredLanguageRef.current] || 'Autodetect';
+      const data = await apiTranslateText(textToTranslate, sourceLang, 'en');
       
-      if (data.responseStatus !== 200) {
-        throw new Error(data.responseDetails || "Translation failed");
+      if (!data.success) {
+        throw new Error(data.message || "Translation failed");
       }
 
-      const result = data.responseData.translatedText;
+      const result = data.translatedText;
       setTranslatedText(result);
-      if (onTranslationUpdate) onTranslationUpdate(result);
+      if (onTranslationUpdateRef.current) onTranslationUpdateRef.current(result);
     } catch (err) {
-      console.error(err);
-      setError("Failed to translate the text. The public translation server might be overloaded.");
+      console.error('Translation error:', err);
+      setError("Failed to translate the text. Ensure your backend is running.");
     } finally {
       setIsTranslating(false);
     }
@@ -254,7 +310,7 @@ export default function AudioRecorder({
           onChange={(e) => {
             setOriginalText(e.target.value);
             finalTranscriptRef.current = e.target.value;
-            onTranscriptionUpdate(e.target.value);
+            onTranscriptionUpdateRef.current(e.target.value);
           }}
           placeholder={`Speak in ${preferredLanguage} or type manually...`}
           className="min-h-[140px] border-none shadow-none text-lg resize-none focus-visible:ring-0 p-4"
@@ -312,14 +368,14 @@ export default function AudioRecorder({
             {isTranslating ? (
               <div className="flex flex-col items-center justify-center h-full text-indigo-400 py-4 gap-2">
                 <Loader2 className="w-6 h-6 animate-spin" />
-                <span className="text-sm font-medium">Translating securely via LibreTranslate...</span>
+                <span className="text-sm font-medium">Translating securely via MyMemory API...</span>
               </div>
             ) : translatedText ? (
               <Textarea
                 value={translatedText}
                 onChange={(e) => {
                   setTranslatedText(e.target.value);
-                  if (onTranslationUpdate) onTranslationUpdate(e.target.value);
+                  if (onTranslationUpdateRef.current) onTranslationUpdateRef.current(e.target.value);
                 }}
                 placeholder="English translation will appear here..."
                 className="min-h-[100px] border-none shadow-none text-lg resize-none focus-visible:ring-0 p-0 text-gray-800 leading-relaxed"
