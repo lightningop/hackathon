@@ -20,11 +20,11 @@ const personSchema = new mongoose.Schema(
       type: String,
       enum: ['MALE', 'FEMALE', 'OTHER', 'PREFER_NOT_TO_SAY']
     },
-    nationality: { type: String, default: '' },
+    nationality: { type: String, required: true },
     languages:   [{ type: String }],
     phone:       { type: String, default: '' },
 
-    originCountry:      { type: String, default: '' },
+    originCountry:      { type: String, required: true },
     originRegion:       { type: String, default: '' },
     flightDate:         { type: Date },
     transitCountries:   [{ type: String }],
